@@ -1,0 +1,10 @@
+body {
+     background-color: #eee;
+     color: black;
+     font-family: sans-serif;
+
+     @media (prefers-color-scheme: dark) {
+          background-color: #1e1e1a;
+          color: snow;
+     }
+}
