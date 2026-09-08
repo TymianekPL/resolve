@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: production
+  cancel-in-progress: true
+
 jobs:
   deploy-frontend:
     runs-on: ubuntu-latest
@@ -22,7 +26,7 @@ jobs:
       - name: Install & Build Frontend
         working-directory: frontend
         run: |
-          npm ci --omit=dev
+          npm ci
           npm run build
 
       - name: Copy Static Files
@@ -53,10 +57,11 @@ jobs:
       - name: Install & Build Backend
         working-directory: backend
         run: |
-          npm ci --omit=dev
+          npm ci
           npm run build
+          npm prune --omit=dev
 
-      - name: Copy Backend Code to Termux
+      - name: Copy Backend Code
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -77,6 +82,6 @@ jobs:
           key: ${{ secrets.SSH_SSH_KEY }}
           script: |
             cd /data/data/com.termux/files/home/server
-            npm ci --production
-            pm2 reload express-api || pm2 start dist/index.js --name "express-api"
+            npm ci --omit=dev
+            NODE_ENV=production pm2 reload express-api --update-env || NODE_ENV=production pm2 start dist/index.js --name "express-api"
             pm2 save
