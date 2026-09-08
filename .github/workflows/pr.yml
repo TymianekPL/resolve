@@ -5,6 +5,7 @@ on:
     paths:
       - 'frontend/**'
       - 'backend/**'
+      - 'database/migrations/**'
       - '.github/workflows/pr.yml'
 
 concurrency:
@@ -69,3 +70,200 @@ jobs:
       - name: Test
         working-directory: backend
         run: npm run test
+          
+  check-migrations:
+    runs-on: ubuntu-latest
+
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: test-root-password
+          MARIADB_DATABASE: test_database
+          MARIADB_USER: test_user
+          MARIADB_PASSWORD: test-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh
+          --connect
+          --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch main
+        run: git fetch origin main --depth=1
+
+      - name: Check migration immutability
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Checking that existing migrations are immutable..."
+
+          changed_existing=0
+
+          while IFS=$'\t' read -r status file old_file; do
+            case "$status" in
+              M)
+                if git cat-file -e "origin/main:$file" 2>/dev/null; then
+                  echo "::error file=$file::Existing migration was modified: $file"
+                  changed_existing=1
+                fi
+                ;;
+
+              D)
+                echo "::error file=$file::Existing migration was deleted: $file"
+                changed_existing=1
+                ;;
+
+              R*)
+                echo "::error file=$file::Existing migration was renamed: $file"
+                changed_existing=1
+                ;;
+            esac
+          done < <(
+            git diff --name-status --find-renames origin/main...HEAD -- \
+              'database/migrations/*.sql'
+          )
+
+          if [ "$changed_existing" -ne 0 ]; then
+            echo
+            echo "Migration files are append-only."
+            echo "Create a new migration instead of modifying or deleting an existing one."
+            exit 1
+          fi
+
+          echo "Migration immutability check passed."
+
+      - name: Install MariaDB client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mariadb-client
+
+      - name: Wait for MariaDB
+        env:
+          MYSQL_PWD: test-password
+        run: |
+          for i in {1..30}; do
+            if mariadb \
+              --host=127.0.0.1 \
+              --port=3306 \
+              --user=test_user \
+              --database=test_database \
+              --protocol=tcp \
+              -e "SELECT 1;" >/dev/null 2>&1; then
+              echo "MariaDB is ready."
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          echo "MariaDB did not become ready."
+          exit 1
+
+      - name: Validate migration SQL
+        env:
+          MYSQL_PWD: test-password
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          migrations=(database/migrations/*.sql)
+
+          if [ ${#migrations[@]} -eq 0 ]; then
+            echo "No migration files found."
+            exit 0
+          fi
+
+          mapfile -t migrations < <(printf '%s\n' "${migrations[@]}" | sort)
+
+          echo "Running ${#migrations[@]} migration(s)..."
+
+          mariadb \
+            --host=127.0.0.1 \
+            --port=3306 \
+            --user=test_user \
+            --database=test_database \
+            --protocol=tcp \
+            --abort-source-on-error \
+            <<'SQL'
+          CREATE TABLE IF NOT EXISTS schema_migrations (
+            version VARCHAR(255) NOT NULL,
+            applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (version)
+          );
+          SQL
+
+          for migration in "${migrations[@]}"; do
+            version="$(basename "$migration")"
+
+            echo "Validating: $version"
+
+            mariadb \
+              --host=127.0.0.1 \
+              --port=3306 \
+              --user=test_user \
+              --database=test_database \
+              --protocol=tcp \
+              --abort-source-on-error \
+              <<SQL
+          START TRANSACTION;
+
+          SOURCE $migration;
+
+          INSERT INTO schema_migrations (version)
+          VALUES ('$version');
+
+          COMMIT;
+          SQL
+
+            echo "OK: $version"
+          done
+
+          echo "All migrations validated successfully."
+
+      - name: Verify migration history
+        env:
+          MYSQL_PWD: test-password
+        run: |
+          set -euo pipefail
+
+          expected="$(
+            find database/migrations -maxdepth 1 -type f -name '*.sql' \
+              -printf '%f\n' | sort
+          )"
+
+          actual="$(
+            mariadb \
+              --host=127.0.0.1 \
+              --port=3306 \
+              --user=test_user \
+              --database=test_database \
+              --protocol=tcp \
+              --batch \
+              --skip-column-names \
+              -e "SELECT version FROM schema_migrations ORDER BY version;"
+          )"
+
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::Migration history does not match migration files."
+            echo
+            echo "Expected:"
+            printf '%s\n' "$expected"
+            echo
+            echo "Actual:"
+            printf '%s\n' "$actual"
+            exit 1
+          fi
+
+          echo "Migration history is valid."
