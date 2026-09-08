@@ -2,7 +2,8 @@
      "name": "resolve-backend",
      "scripts": {
           "build": "tsc",
-          "start": "node dist"
+          "start": "node dist",
+          "test": "node --test tests/**/*.test.ts"
      },
      "devDependencies": {
           "@eslint/js": "^10.0.1",
