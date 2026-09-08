@@ -61,27 +61,133 @@ jobs:
           npm run build
           npm prune --omit=dev
 
-      - name: Copy Backend Code
+      - name: Copy Database Migrations
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_SSH_KEY }}
-          source: "backend/dist,backend/package.json,backend/package-lock.json"
-          strip_components: 1
-          target: "/data/data/com.termux/files/home/server"
+          source: "database/migrations/*"
+          strip_components: 2
+          target: "/data/data/com.termux/files/home/server/database/migrations"
           overwrite: true
 
-      - name: Production Install & PM2 Lifecycle Update
+      - name: Run Migrations & Update PM2
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           port: ${{ secrets.SSH_PORT }}
           key: ${{ secrets.SSH_SSH_KEY }}
+          envs: DB_HOST,DB_PORT,DB_NAME,DB_USER,DB_PASSWORD
           script: |
+            set -e
+
             cd /data/data/com.termux/files/home/server
-            npm ci --omit=dev
-            NODE_ENV=production pm2 reload express-api --update-env || NODE_ENV=production pm2 start dist/index.js --name "express-api"
+
+            : "${DB_HOST:?DB_HOST is required}"
+            : "${DB_PORT:?DB_PORT is required}"
+            : "${DB_NAME:?DB_NAME is required}"
+            : "${DB_USER:?DB_USER is required}"
+            : "${DB_PASSWORD:?DB_PASSWORD is required}"
+
+            export MYSQL_PWD="$DB_PASSWORD"
+
+            echo "Checking MariaDB connection..."
+            mariadb \
+              --host="$DB_HOST" \
+              --port="$DB_PORT" \
+              --user="$DB_USER" \
+              --protocol=tcp \
+              -e "SELECT 1;" >/dev/null
+
+            echo "Creating db..."
+            mariadb \
+              --host="$DB_HOST" \
+              --port="$DB_PORT" \
+              --user="$DB_USER" \
+              --protocol=tcp \
+              -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;"
+
+            echo "Creating migration table..."
+            mariadb \
+              --host="$DB_HOST" \
+              --port="$DB_PORT" \
+              --user="$DB_USER" \
+              --database="$DB_NAME" \
+              --protocol=tcp \
+              -e "
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                  version VARCHAR(255) NOT NULL,
+                  applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  PRIMARY KEY (version)
+                );
+              "
+
+            shopt -s nullglob
+            migrations=(database/migrations/*.sql)
+
+            if [ ${#migrations[@]} -eq 0 ]; then
+              echo "No migration files found."
+            else
+              mapfile -t migrations < <(printf '%s\n' "${migrations[@]}" | sort)
+
+              for migration in "${migrations[@]}"; do
+                version="$(basename "$migration")"
+
+                applied="$(
+                  mariadb \
+                    --host="$DB_HOST" \
+                    --port="$DB_PORT" \
+                    --user="$DB_USER" \
+                    --database="$DB_NAME" \
+                    --protocol=tcp \
+                    --batch \
+                    --skip-column-names \
+                    -e "SELECT COUNT(*) FROM schema_migrations WHERE version = '$version';"
+                )"
+
+                if [ "$applied" -eq 1 ]; then
+                  echo "Skipping already applied migration: $version"
+                  continue
+                fi
+
+                echo "Applying migration: $version"
+
+                mariadb \
+                  --host="$DB_HOST" \
+                  --port="$DB_PORT" \
+                  --user="$DB_USER" \
+                  --database="$DB_NAME" \
+                  --protocol=tcp \
+                  --abort-source-on-error \
+                  <<SQL
+            START TRANSACTION;
+
+            SOURCE $migration;
+
+            INSERT INTO schema_migrations (version)
+            VALUES ('$version');
+
+            COMMIT;
+            SQL
+
+                echo "Applied migration: $version"
+              done
+            fi
+
+            unset MYSQL_PWD
+
+            echo "All migrations completed."
+
+            NODE_ENV=production pm2 reload express-api --update-env || \
+              NODE_ENV=production pm2 start dist/index.js --name "express-api"
+
             pm2 save

@@ -1,0 +1,1 @@
+create table test_stuff (id int primary key auto_increment);
