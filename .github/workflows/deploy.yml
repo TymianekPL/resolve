@@ -22,7 +22,7 @@ jobs:
       - name: Install & Build Frontend
         working-directory: frontend
         run: |
-          npm ci
+          npm ci --omit=dev
           npm run build
 
       - name: Copy Static Files
@@ -53,7 +53,7 @@ jobs:
       - name: Install & Build Backend
         working-directory: backend
         run: |
-          npm ci
+          npm ci --omit=dev
           npm run build
 
       - name: Copy Backend Code to Termux
