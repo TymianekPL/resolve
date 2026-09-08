@@ -1,1 +1,1 @@
-create table test_stuff (int primary key auto_increment);
+create table test_stuff (id int primary key auto_increment);
