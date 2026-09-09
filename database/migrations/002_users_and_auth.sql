@@ -11,7 +11,6 @@ alter table user_preferences add constraint fk_user_preference_id foreign key (i
 alter table user_preferences add constraint fk_user_preference_colour_scheme foreign key (colour_scheme_id) references colour_schemes(id);
 alter table user_preferences add constraint fk_user_preference_language foreign key (language_id) references languages(id);
 alter table user_authentication add constraint fk_auth_user foreign key (user_id) references users(id);
-alter table user_authentication add constraint fk_auth_user foreign key (auth_type_id) references auth_types(id);
+alter table user_authentication add constraint fk_auth_auth_type foreign key (auth_type_id) references auth_types(id);
 alter table active_login_sessions add constraint fk_active_session_user foreign key (user_id) references users(id);
-alter table user_authentication add constraint fk_auth_user foreign key (user_id) references users(id);
 alter table refresh_tokens add constraint fk_refresh_token_user foreign key (user_id) references users(id);
