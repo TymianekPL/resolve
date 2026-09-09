@@ -1,6 +1,11 @@
 import express from "express";
+import { config } from "dotenv";
+import { checkDb } from "./db.js";
 
-const PORT = 3000;
+config();
+checkDb();
+
+const PORT = parseInt(process.env["BACKEND_PORT"] ?? "3000");
 
 const server = express();
 
