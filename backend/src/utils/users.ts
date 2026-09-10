@@ -16,7 +16,7 @@ export const createUser = async (username: string, password: string, displayName
 
         const insertUser = await connection.query<{ insertId: number; }>("insert into users (username, display_name) values (?, ?);", [username, displayName]);
         await connection.query("insert into user_preferences (id, language_id) values (?, null);", [insertUser.insertId]);
-        await connection.query("insert into user_authentication (user_id, auth_type_id, is_primary, is_secondary) values (?, 0, true, false);")
+        await connection.query("insert into user_authentication (user_id, auth_type_id, is_primary, is_secondary, data) values (?, 0, true, false, ?);", [insertUser.insertId, password])
         await connection.commit();
     }
     catch (error) {
