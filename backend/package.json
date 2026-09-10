@@ -4,7 +4,9 @@
           "build": "tsc",
           "lint": "eslint .",
           "start": "node dist",
-          "test": "node --test tests/**/*.test.ts"
+          "test": "node --test tests/**/*.test.ts",
+          "dev:build": "npx tsc --watch",
+          "dev": "node --watch dist"
      },
      "devDependencies": {
           "@eslint/js": "^10.0.1",
