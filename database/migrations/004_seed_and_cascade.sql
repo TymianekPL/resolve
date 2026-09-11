@@ -11,3 +11,6 @@ alter table refresh_tokens drop constraint fk_refresh_token_user;
 alter table refresh_tokens add constraint fk_refresh_token_user foreign key (user_id) references users(id) on delete cascade;
 
 insert into auth_types (locale_name, can_be_primary, can_be_secondary) values ("password", 1, 0);
+insert into languages (locale) values ("english");
+insert into colour_schemes (locale_name) values ("dark");
+insert into colour_schemes (locale_name) values ("light");
