@@ -4,7 +4,6 @@ import { createUser, Errors } from "../utils/users.js";
 const userRouter = Router();
 
 userRouter.post("/register", async (req, res) => {
-     console.log(req.body);
      if (!req.body || !req.body.username || !req.body.password || !req.body.displayName) {
           res.status(400).json({
                status: 400,
